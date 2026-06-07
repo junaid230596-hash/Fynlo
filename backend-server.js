@@ -61,10 +61,10 @@ pool.connect()
 // RAZORPAY (UPI + Cards + Net Banking)
 // ═══════════════════════════════════════════════════════════
 
-//const razorpay = new Razorpay({
-//  key_id    : process.env.RAZORPAY_KEY_ID,
-//  key_secret: process.env.RAZORPAY_KEY_SECRET,
-//});
+const razorpay = new Razorpay({
+  key_id    : process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
 
 // ═══════════════════════════════════════════════════════════
 // MIDDLEWARE
@@ -398,9 +398,10 @@ async function initDatabase() {
 // HELPERS
 // ═══════════════════════════════════════════════════════════
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || process.env.jwt_secret;
 if (!JWT_SECRET) {
-  console.error('✗ JWT_SECRET missing from .env — server will not start');
+  console.error('✗ JWT_SECRET missing — please set it in Railway Variables tab');
+  console.error('  Available env keys:', Object.keys(process.env).filter(k => !k.includes('npm') && !k.includes('NODE')).join(', '));
   process.exit(1);
 }
 
@@ -1209,6 +1210,15 @@ app.use((req, res) => {
 
 async function start() {
   try {
+    // Print environment check on startup
+    console.log('── Environment Check ──');
+    console.log('  JWT_SECRET:    ', process.env.JWT_SECRET       ? '✓ set' : '✗ MISSING');
+    console.log('  DATABASE_URL:  ', process.env.DATABASE_URL      ? '✓ set' : '✗ MISSING');
+    console.log('  RAZORPAY_KEY:  ', process.env.RAZORPAY_KEY_ID   ? '✓ set' : '✗ MISSING');
+    console.log('  FRONTEND_URL:  ', process.env.FRONTEND_URL       ? '✓ set' : '✗ MISSING');
+    console.log('  NODE_ENV:      ', process.env.NODE_ENV           || 'not set');
+    console.log('  PORT:          ', process.env.PORT               || '3000 (default)');
+    console.log('───────────────────────');
     await initDatabase();
     app.listen(PORT, () => {
       console.log('');
