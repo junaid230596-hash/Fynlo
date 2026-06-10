@@ -140,7 +140,7 @@ async function initDatabase() {
         ifsc_code           VARCHAR(20),
         upi_id              VARCHAR(100),
         razorpay_account_id VARCHAR(100),
-        subscription_plan   VARCHAR(50)   DEFAULT 'Starter',
+        subscription_plan   VARCHAR(50)   DEFAULT 'Free',
         subscription_status VARCHAR(50)   DEFAULT 'trial',
         trial_ends_at       DATE          DEFAULT (CURRENT_DATE + INTERVAL '14 days'),
         total_revenue       DECIMAL(12,2) DEFAULT 0,
@@ -436,7 +436,7 @@ const checkPlanLimit = async (businessId, resource) => {
     'SELECT * FROM subscriptions WHERE business_id = $1 AND is_active = true',
     [businessId]
   );
-  const limits = sub.rows[0] || { max_products: 100, max_employees: 5, max_invoices_per_month: 50 };
+  const limits = sub.rows[0] || { max_products: 10, max_employees: 2, max_invoices_per_month: 10 };
 
   if (resource === 'product') {
     const { rows } = await pool.query('SELECT COUNT(*) FROM products WHERE business_id = $1', [businessId]);
@@ -522,11 +522,11 @@ app.post('/api/auth/register', async (req, res) => {
       // Link user to business
       await client.query('UPDATE users SET business_id = $1 WHERE id = $2', [businessId, userId]);
 
-      // Create default Starter subscription
+      // Create default Free subscription
       await client.query(
         `INSERT INTO subscriptions
            (business_id, plan_name, price, currency, max_products, max_employees, max_invoices_per_month)
-         VALUES ($1,'Starter',499,'INR',100,5,50)`,
+         VALUES ($1,'Free',0,'INR',10,2,10)`,
         [businessId]
       );
     }
@@ -1072,10 +1072,11 @@ app.post('/api/payments/verify', auth, async (req, res) => {
 
     // Upgrade plan if provided
     if (plan_name) {
-      const planPrices = { Starter: 499, Professional: 1299, Enterprise: 2499 };
+      const planPrices = { Free: 0, Starter: 499, Professional: 1299, Enterprise: 2499 };
       const planLimits = {
-        Starter     : { max_products: 100,  max_employees: 5,         max_invoices_per_month: 50 },
-        Professional: { max_products: 1000, max_employees: 25,        max_invoices_per_month: 500 },
+        Free        : { max_products: 10,     max_employees: 2,       max_invoices_per_month: 10 },
+        Starter     : { max_products: 100,    max_employees: 5,       max_invoices_per_month: 50 },
+        Professional: { max_products: 1000,   max_employees: 25,      max_invoices_per_month: 500 },
         Enterprise  : { max_products: 999999, max_employees: 999999,  max_invoices_per_month: 999999 },
       };
       await pool.query(
