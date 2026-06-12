@@ -1118,6 +1118,83 @@ app.patch('/api/notifications/read-all', auth, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// EXPENSES (Simple tracking)
+// ═══════════════════════════════════════════════════════════
+
+app.get('/api/expenses', auth, async (req, res) => {
+  try {
+    // Use invoice data to derive expenses for now
+    // Full expense table can be added to schema later
+    res.json([]);
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// CUSTOMERS (derived from invoice data)
+// ═══════════════════════════════════════════════════════════
+
+app.get('/api/customers', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         customer_name AS name,
+         customer_email AS email,
+         customer_phone AS phone,
+         COUNT(*) AS total_invoices,
+         SUM(total_amount) AS total_spent,
+         MAX(invoice_date) AS last_purchase,
+         MIN(invoice_date) AS first_purchase,
+         SUM(CASE WHEN payment_status='paid' THEN total_amount ELSE 0 END) AS paid_amount,
+         SUM(CASE WHEN payment_status='pending' THEN total_amount ELSE 0 END) AS pending_amount
+       FROM invoices
+       WHERE business_id=$1
+       GROUP BY customer_name, customer_email, customer_phone
+       ORDER BY total_spent DESC`,
+      [req.user.businessId]
+    );
+    res.json(result.rows);
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// SUBSCRIPTION AUTO-BILLING
+// ═══════════════════════════════════════════════════════════
+
+// Get subscription status
+app.get('/api/subscription', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM subscriptions WHERE business_id=$1 AND is_active=true ORDER BY created_at DESC LIMIT 1',
+      [req.user.businessId]
+    );
+    res.json(result.rows[0] || { plan_name:'Free', price:0, max_products:10, max_employees:2, max_invoices_per_month:10 });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// Toggle auto-renew
+app.patch('/api/subscription/auto-renew', auth, async (req, res) => {
+  try {
+    const { auto_renew } = req.body;
+    await pool.query(
+      'UPDATE subscriptions SET auto_renew=$1, updated_at=NOW() WHERE business_id=$2 AND is_active=true',
+      [auto_renew, req.user.businessId]
+    );
+    res.json({ success:true, auto_renew });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// Cancel subscription (downgrade to Free at period end)
+app.delete('/api/subscription', auth, async (req, res) => {
+  try {
+    await pool.query(
+      'UPDATE subscriptions SET auto_renew=false, cancelled_at=NOW(), updated_at=NOW() WHERE business_id=$1 AND is_active=true',
+      [req.user.businessId]
+    );
+    res.json({ success:true, message:'Subscription cancelled. You will be downgraded to Free at end of billing period.' });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════
 // CHAT
 // ═══════════════════════════════════════════════════════════
 
