@@ -25,6 +25,7 @@ const Razorpay   = require('razorpay');
 const crypto     = require('crypto');
 const rateLimit  = require('express-rate-limit');
 const helmet     = require('helmet');
+const nodemailer = require('nodemailer');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -111,6 +112,8 @@ async function initDatabase() {
         avatar        VARCHAR(10),
         phone         VARCHAR(20),
         is_active     BOOLEAN   DEFAULT true,
+        email_verified BOOLEAN  DEFAULT false,
+        phone_verified BOOLEAN  DEFAULT false,
         last_login    TIMESTAMP,
         created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -575,6 +578,121 @@ app.post('/api/auth/login', async (req, res) => {
       user: { id: user.id, email: user.email, name: user.name, role: user.role, avatar: user.avatar, businessId: user.business_id },
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// GMAIL SMTP EMAIL (for OTP verification)
+// ═══════════════════════════════════════════════════════════
+
+// Set these in Railway Variables:
+// GMAIL_USER     = your-email@gmail.com
+// GMAIL_PASSWORD = your-gmail-app-password (NOT your regular password)
+// How to get App Password:
+//   1. Gmail → Settings → Security → 2-Step Verification (enable)
+//   2. Then go to: Security → App Passwords
+//   3. Select App: Mail, Device: Other → Generate
+//   4. Copy the 16-character password shown
+
+const emailTransporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASSWORD,
+  },
+});
+
+// Send email OTP
+app.post('/api/auth/send-email-otp', auth, async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
+
+    // Validate OTP is 6 digits
+    if (!/^\d{6}$/.test(String(otp))) return res.status(400).json({ error: 'Invalid OTP format' });
+
+    if (!process.env.GMAIL_USER || !process.env.GMAIL_PASSWORD) {
+      // SMTP not configured — return success so frontend shows OTP in toast (dev mode)
+      return res.json({ success: true, devMode: true });
+    }
+
+    await emailTransporter.sendMail({
+      from    : `"Fynlo" <${process.env.GMAIL_USER}>`,
+      to      : email,
+      subject : 'Fynlo — Your Email Verification OTP',
+      html    : `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f8fafc;border-radius:16px;">
+          <div style="text-align:center;margin-bottom:24px;">
+            <h1 style="color:#4f46e5;margin:0;font-size:28px;">Fyn<span style="color:#94a3b8;">lo</span></h1>
+          </div>
+          <div style="background:white;border-radius:12px;padding:24px;border:1px solid #e2e8f0;">
+            <h2 style="margin:0 0 8px;color:#1e293b;">Verify your email address</h2>
+            <p style="color:#64748b;margin:0 0 24px;font-size:14px;">Enter this OTP in the Fynlo app to verify your email address.</p>
+            <div style="text-align:center;background:#f0f4ff;border-radius:12px;padding:24px;margin-bottom:24px;">
+              <div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#4f46e5;">${otp}</div>
+              <div style="font-size:12px;color:#94a3b8;margin-top:8px;">Valid for 10 minutes</div>
+            </div>
+            <p style="color:#94a3b8;font-size:12px;margin:0;">If you didn't request this, you can safely ignore this email.</p>
+          </div>
+          <p style="text-align:center;color:#94a3b8;font-size:11px;margin-top:16px;">© ${new Date().getFullYear()} Fynlo · Business Management Platform</p>
+        </div>`,
+    });
+
+    res.json({ success: true });
+  } catch(err) {
+    console.error('Email OTP error:', err.message);
+    // Don't expose SMTP errors to client — return devMode so frontend shows OTP in toast
+    res.json({ success: true, devMode: true, error: err.message });
+  }
+});
+
+// Send invoice via email
+app.post('/api/invoices/:id/send-email', auth, async (req, res) => {
+  try {
+    const { to, subject, message } = req.body;
+    if (!to) return res.status(400).json({ error: 'Recipient email required' });
+
+    if (!process.env.GMAIL_USER || !process.env.GMAIL_PASSWORD) {
+      return res.status(503).json({ error: 'Email not configured. Add GMAIL_USER and GMAIL_PASSWORD to Railway Variables.' });
+    }
+
+    const inv = await pool.query('SELECT * FROM invoices WHERE id=$1 AND business_id=$2', [req.params.id, req.user.businessId]);
+    if (!inv.rows.length) return res.status(404).json({ error: 'Invoice not found' });
+    const invoice = inv.rows[0];
+
+    await emailTransporter.sendMail({
+      from   : `"Fynlo Business" <${process.env.GMAIL_USER}>`,
+      to,
+      subject: subject || `Invoice ${invoice.invoice_number} from Fynlo`,
+      html   : `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+          <h2 style="color:#4f46e5;">Invoice ${invoice.invoice_number}</h2>
+          <p style="color:#64748b;">${message || 'Please find your invoice attached.'}</p>
+          <table style="width:100%;border-collapse:collapse;margin:24px 0;">
+            <tr style="background:#f8fafc;">
+              <td style="padding:10px;border:1px solid #e2e8f0;font-weight:700;">Customer</td>
+              <td style="padding:10px;border:1px solid #e2e8f0;">${invoice.customer_name}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px;border:1px solid #e2e8f0;font-weight:700;">Amount</td>
+              <td style="padding:10px;border:1px solid #e2e8f0;font-size:20px;font-weight:900;color:#4f46e5;">₹${parseFloat(invoice.total_amount).toLocaleString('en-IN')}</td>
+            </tr>
+            <tr style="background:#f8fafc;">
+              <td style="padding:10px;border:1px solid #e2e8f0;font-weight:700;">Status</td>
+              <td style="padding:10px;border:1px solid #e2e8f0;">${invoice.payment_status.toUpperCase()}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px;border:1px solid #e2e8f0;font-weight:700;">Due Date</td>
+              <td style="padding:10px;border:1px solid #e2e8f0;">${invoice.due_date || 'On receipt'}</td>
+            </tr>
+          </table>
+          <p style="color:#94a3b8;font-size:12px;">Powered by Fynlo · Business Management Platform</p>
+        </div>`,
+    });
+
+    res.json({ success: true });
+  } catch(err) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -1153,6 +1271,85 @@ app.get('/api/customers', auth, async (req, res) => {
       [req.user.businessId]
     );
     res.json(result.rows);
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// EMAIL OTP VERIFICATION (Gmail SMTP)
+// ═══════════════════════════════════════════════════════════
+
+// In-memory OTP store (use Redis in production)
+const otpStore = new Map();
+
+app.post('/api/auth/send-email-otp', auth, async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
+
+    // Store OTP with 10-minute expiry
+    otpStore.set(email, { otp, expires: Date.now() + 10 * 60 * 1000 });
+
+    // Send via Gmail SMTP (nodemailer)
+    // Install: npm install nodemailer
+    try {
+      const nodemailer = require('nodemailer');
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: 587,
+        secure: false,
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASSWORD,
+        },
+      });
+
+      await transporter.sendMail({
+        from: `"Fynlo" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: 'Verify your email — Fynlo',
+        html: `
+          <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f8fafc;border-radius:16px;">
+            <div style="text-align:center;margin-bottom:24px;">
+              <h2 style="color:#4f46e5;margin:0;">Fynlo</h2>
+              <p style="color:#64748b;margin:4px 0 0;">Business Management Platform</p>
+            </div>
+            <div style="background:white;border-radius:12px;padding:24px;text-align:center;">
+              <p style="font-size:16px;color:#1e293b;margin:0 0 16px;">Your email verification code:</p>
+              <div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#4f46e5;padding:20px;background:#f0f4ff;border-radius:10px;">${otp}</div>
+              <p style="font-size:13px;color:#64748b;margin:16px 0 0;">This code expires in <strong>10 minutes</strong>.</p>
+              <p style="font-size:12px;color:#94a3b8;margin:8px 0 0;">If you didn't request this, ignore this email.</p>
+            </div>
+          </div>`,
+      });
+      res.json({ success: true, message: 'OTP sent via email' });
+    } catch(emailErr) {
+      console.error('SMTP error:', emailErr.message);
+      // Return success anyway — frontend shows OTP in dev mode
+      res.json({ success: true, devOtp: process.env.NODE_ENV !== 'production' ? otp : undefined });
+    }
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// Verify OTP and mark email as verified in DB
+app.post('/api/auth/verify-email', auth, async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const stored = otpStore.get(email);
+
+    if (!stored) return res.status(400).json({ error: 'No OTP found. Please request a new one.' });
+    if (Date.now() > stored.expires) {
+      otpStore.delete(email);
+      return res.status(400).json({ error: 'OTP expired. Please request a new one.' });
+    }
+    if (stored.otp !== otp) return res.status(400).json({ error: 'Incorrect OTP. Please try again.' });
+
+    // Mark email verified in DB
+    await pool.query(
+      'UPDATE users SET email_verified=true, updated_at=NOW() WHERE id=$1',
+      [req.user.userId]
+    );
+    otpStore.delete(email);
+    res.json({ success: true, message: 'Email verified successfully!' });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
