@@ -19,7 +19,7 @@ require('dotenv').config();
 const express    = require('express');
 const { Pool }   = require('pg');
 const jwt        = require('jsonwebtoken');
-const bcrypt     = require('bcrypt');
+const bcrypt     = require('bcryptjs');
 const cors       = require('cors');
 const Razorpay   = require('razorpay');
 const crypto     = require('crypto');
