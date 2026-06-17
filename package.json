@@ -1,24 +1,20 @@
 {
   "name": "fynlo-backend",
   "version": "1.0.0",
-  "description": "Fynlo Business Management SaaS",
   "main": "backend-server.js",
   "scripts": {
     "start": "node backend-server.js"
   },
-  "engines": {
-    "node": "18.x"
-  },
   "dependencies": {
-    "bcryptjs": "2.4.3",
-    "cors": "2.8.5",
-    "dotenv": "16.3.1",
-    "express": "4.18.2",
-    "express-rate-limit": "7.1.1",
-    "helmet": "7.1.0",
-    "jsonwebtoken": "9.0.2",
-    "nodemailer": "6.9.7",
-    "pg": "8.11.3",
-    "razorpay": "2.9.2"
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.1",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.9.7",
+    "pg": "^8.11.3",
+    "razorpay": "^2.9.2"
   }
 }
