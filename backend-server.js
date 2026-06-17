@@ -61,11 +61,17 @@ pool.connect()
 // ═══════════════════════════════════════════════════════════
 // RAZORPAY (UPI + Cards + Net Banking)
 // ═══════════════════════════════════════════════════════════
-
-const razorpay = new Razorpay({
-  key_id    : process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+// Safe initialization — won't crash if keys not set yet
+let razorpay = null;
+if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+  razorpay = new Razorpay({
+    key_id    : process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+  });
+  console.log('✓ Razorpay initialized');
+} else {
+  console.warn('⚠ Razorpay keys not set — payment routes will be disabled');
+}
 
 // ═══════════════════════════════════════════════════════════
 // MIDDLEWARE
@@ -595,13 +601,20 @@ app.post('/api/auth/login', async (req, res) => {
 //   3. Select App: Mail, Device: Other → Generate
 //   4. Copy the 16-character password shown
 
-const emailTransporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASSWORD,
-  },
-});
+// Email transporter — only initialized if GMAIL credentials are set
+let emailTransporter = null;
+if (process.env.GMAIL_USER && process.env.GMAIL_PASSWORD) {
+  emailTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_PASSWORD,
+    },
+  });
+  console.log('✓ Gmail SMTP initialized');
+} else {
+  console.warn('⚠ Gmail not configured — OTP emails will show in dev mode only');
+}
 
 // Send email OTP
 app.post('/api/auth/send-email-otp', auth, async (req, res) => {
@@ -612,7 +625,7 @@ app.post('/api/auth/send-email-otp', auth, async (req, res) => {
     // Validate OTP is 6 digits
     if (!/^\d{6}$/.test(String(otp))) return res.status(400).json({ error: 'Invalid OTP format' });
 
-    if (!process.env.GMAIL_USER || !process.env.GMAIL_PASSWORD) {
+    if (!emailTransporter) {
       // SMTP not configured — return success so frontend shows OTP in toast (dev mode)
       return res.json({ success: true, devMode: true });
     }
@@ -1152,11 +1165,11 @@ app.patch('/api/payroll/:id/pay', auth, async (req, res) => {
 // Create Razorpay order (for invoice payment or plan upgrade)
 app.post('/api/payments/create-order', auth, async (req, res) => {
   try {
+    if (!razorpay) return res.status(503).json({ error: 'Payment gateway not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to Railway variables.' });
     const { amount, currency, notes } = req.body;
     if (!amount) return res.status(400).json({ error: 'Amount required' });
-
     const order = await razorpay.orders.create({
-      amount  : Math.round(amount * 100),   // paise
+      amount  : Math.round(amount * 100),
       currency: currency || 'INR',
       notes   : notes || {},
     });
@@ -1279,56 +1292,8 @@ app.get('/api/customers', auth, async (req, res) => {
 // ═══════════════════════════════════════════════════════════
 
 // In-memory OTP store (use Redis in production)
+// OTP store for email verification (in-memory, resets on server restart)
 const otpStore = new Map();
-
-app.post('/api/auth/send-email-otp', auth, async (req, res) => {
-  try {
-    const { email, otp } = req.body;
-    if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
-
-    // Store OTP with 10-minute expiry
-    otpStore.set(email, { otp, expires: Date.now() + 10 * 60 * 1000 });
-
-    // Send via Gmail SMTP (nodemailer)
-    // Install: npm install nodemailer
-    try {
-      const nodemailer = require('nodemailer');
-      const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || 'smtp.gmail.com',
-        port: 587,
-        secure: false,
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASSWORD,
-        },
-      });
-
-      await transporter.sendMail({
-        from: `"Fynlo" <${process.env.SMTP_USER}>`,
-        to: email,
-        subject: 'Verify your email — Fynlo',
-        html: `
-          <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f8fafc;border-radius:16px;">
-            <div style="text-align:center;margin-bottom:24px;">
-              <h2 style="color:#4f46e5;margin:0;">Fynlo</h2>
-              <p style="color:#64748b;margin:4px 0 0;">Business Management Platform</p>
-            </div>
-            <div style="background:white;border-radius:12px;padding:24px;text-align:center;">
-              <p style="font-size:16px;color:#1e293b;margin:0 0 16px;">Your email verification code:</p>
-              <div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#4f46e5;padding:20px;background:#f0f4ff;border-radius:10px;">${otp}</div>
-              <p style="font-size:13px;color:#64748b;margin:16px 0 0;">This code expires in <strong>10 minutes</strong>.</p>
-              <p style="font-size:12px;color:#94a3b8;margin:8px 0 0;">If you didn't request this, ignore this email.</p>
-            </div>
-          </div>`,
-      });
-      res.json({ success: true, message: 'OTP sent via email' });
-    } catch(emailErr) {
-      console.error('SMTP error:', emailErr.message);
-      // Return success anyway — frontend shows OTP in dev mode
-      res.json({ success: true, devOtp: process.env.NODE_ENV !== 'production' ? otp : undefined });
-    }
-  } catch(err) { res.status(500).json({ error: err.message }); }
-});
 
 // Verify OTP and mark email as verified in DB
 app.post('/api/auth/verify-email', auth, async (req, res) => {
