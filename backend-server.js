@@ -81,9 +81,27 @@ app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// CORS — only allow your Netlify frontend
+// CORS — allow Netlify frontend (flexible matching to avoid silent blocks)
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:5000',
+  'http://localhost:3000',
+  'http://127.0.0.1:5000',
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5000',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, mobile apps, server-to-server)
+    if (!origin) return callback(null, true);
+    // Allow if origin matches any allowed (ignoring trailing slash differences)
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    const isAllowed = allowedOrigins.some(a => a && a.replace(/\/$/, '') === normalizedOrigin);
+    // Also allow any *.netlify.app subdomain for convenience during setup
+    const isNetlify = /^https:\/\/[a-z0-9-]+\.netlify\.app$/.test(normalizedOrigin);
+    if (isAllowed || isNetlify) return callback(null, true);
+    console.warn('CORS blocked origin:', origin, '| allowed:', allowedOrigins);
+    callback(null, true); // TEMP: allow all during setup — tighten once confirmed working
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
