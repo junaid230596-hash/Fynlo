@@ -98,7 +98,8 @@ app.use(cors({
     const isAllowed = allowedOrigins.some(a => a && a.replace(/\/$/, '') === normalizedOrigin);
     // Also allow any *.netlify.app subdomain for convenience during setup
     const isNetlify = /^https:\/\/[a-z0-9-]+\.netlify\.app$/.test(normalizedOrigin);
-    if (isAllowed || isNetlify) return callback(null, true);
+    const isVercel = /^https:\/\/[a-z0-9-]+\.nercel\.app$/.test(normalizedOrigin);
+    if (isAllowed || isNetlify || isVercel) return callback(null, true);
     console.warn('CORS blocked origin:', origin, '| allowed:', allowedOrigins);
     callback(null, true); // TEMP: allow all during setup — tighten once confirmed working
   },
